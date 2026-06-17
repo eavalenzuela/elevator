@@ -59,10 +59,19 @@ to run, a confidence and blast-radius rating, and a reference. You decide and ru
   reading the `security.capability` xattr directly (no `getcap` dependency).
 - **writable** — write access to `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`,
   and `/etc/sudoers.d/`.
+- **cron** — root-run cron scripts in `/etc/cron.{hourly,daily,weekly,monthly}` and
+  absolute paths referenced by `/etc/crontab` / `/etc/cron.d/*` that are writable.
+- **groups** — membership in groups with a known route to root: `docker`, `lxd`/`lxc`,
+  `disk`, `shadow`, `adm`.
+- **nfs** — `/etc/exports` entries configured with `no_root_squash`.
+- **kernel** — information-only LPE suggestions keyed on the running kernel version
+  (DirtyCOW / DirtyPipe / OverlayFS) plus `pkexec`/PwnKit. These are version-keyed,
+  marked `destructive`, and carry **no runnable command** — confirm the patch level
+  and run anything manually.
 
-Routes the architecture already supports as drop-ins (roadmap): writable/PATH-hijack
-cron jobs, writable systemd units, `docker`/`lxd` group membership, NFS `no_root_squash`,
-and information-only kernel-LPE suggestions.
+Roadmap drop-ins (same `Check` pattern): writable systemd units / service binaries,
+cron `PATH`/wildcard injection, `strings`-based SUID PATH-hijack detection, and
+`LD_PRELOAD`/`LD_LIBRARY_PATH` sudo `env_keep` abuse.
 
 ## Blast radius
 
