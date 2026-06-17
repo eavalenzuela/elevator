@@ -53,14 +53,20 @@ to run, a confidence and blast-radius rating, and a reference. You decide and ru
 ## Checks (current)
 
 - **sudo** — parses `sudo -n -l` (a read-only listing; it never runs a sudo command)
-  for NOPASSWD entries and unrestricted sudo, correlating binaries to GTFOBins.
-- **filesystem** — a single walk that finds SUID/SGID-root binaries (GTFOBins-correlated)
-  and Linux file capabilities that grant escalation (`cap_setuid`, `cap_dac_*`, …),
-  reading the `security.capability` xattr directly (no `getcap` dependency).
+  for NOPASSWD entries and unrestricted sudo, correlating binaries to GTFOBins, and
+  flags `env_keep` configs that preserve `LD_PRELOAD` / `LD_LIBRARY_PATH`.
+- **filesystem** — a single walk that finds SUID/SGID-root binaries (GTFOBins-correlated),
+  Linux file capabilities that grant escalation (`cap_setuid`, `cap_dac_*`, …) read
+  straight from the `security.capability` xattr (no `getcap` dependency), and
+  non-standard SUID binaries that appear to call a helper by relative name
+  (PATH-hijack candidates, via in-process string analysis — no `strings(1)`).
 - **writable** — write access to `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`,
   and `/etc/sudoers.d/`.
-- **cron** — root-run cron scripts in `/etc/cron.{hourly,daily,weekly,monthly}` and
-  absolute paths referenced by `/etc/crontab` / `/etc/cron.d/*` that are writable.
+- **cron** — writable root-run cron scripts and crontab-referenced paths; commands
+  invoked by relative name while a writable directory is on the cron `PATH`; and
+  wildcard arguments to abusable binaries (`tar`/`rsync`/`chown`/…) for wildcard injection.
+- **systemd** — writable root service unit files, and writable `ExecStart` binaries
+  of units that run as root.
 - **groups** — membership in groups with a known route to root: `docker`, `lxd`/`lxc`,
   `disk`, `shadow`, `adm`.
 - **nfs** — `/etc/exports` entries configured with `no_root_squash`.
@@ -69,9 +75,8 @@ to run, a confidence and blast-radius rating, and a reference. You decide and ru
   marked `destructive`, and carry **no runnable command** — confirm the patch level
   and run anything manually.
 
-Roadmap drop-ins (same `Check` pattern): writable systemd units / service binaries,
-cron `PATH`/wildcard injection, `strings`-based SUID PATH-hijack detection, and
-`LD_PRELOAD`/`LD_LIBRARY_PATH` sudo `env_keep` abuse.
+Ideas for further checks (same `Check` pattern): systemd timers, D-Bus/polkit policy,
+LD hijack on SUID binaries, wider GTFOBins coverage, and a richer kernel-CVE dataset.
 
 ## Blast radius
 
