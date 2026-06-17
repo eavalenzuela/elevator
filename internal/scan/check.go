@@ -59,6 +59,10 @@ func DefaultChecks() []Check {
 		&SudoCheck{},
 		&FilesystemCheck{}, // SUID/SGID + capabilities (single filesystem walk)
 		&WritableCheck{},
+		&CronCheck{},
+		&GroupsCheck{},
+		&NFSCheck{},
+		&KernelCheck{}, // information-only suggestions
 	}
 }
 

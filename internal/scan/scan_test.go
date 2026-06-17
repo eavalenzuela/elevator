@@ -96,6 +96,71 @@ func TestSuidFindingCorrelatesGTFO(t *testing.T) {
 	}
 }
 
+func TestExtractAbsPaths(t *testing.T) {
+	got := extractAbsPaths("*/5 * * * * root /opt/app/run.sh --flag /tmp/x")
+	want := map[string]bool{"/opt/app/run.sh": true, "/tmp/x": true}
+	if len(got) != 2 {
+		t.Fatalf("want 2 paths, got %v", got)
+	}
+	for _, p := range got {
+		if !want[p] {
+			t.Errorf("unexpected path %q", p)
+		}
+	}
+	if extractAbsPaths("# /etc/commented/out") != nil {
+		t.Error("comment lines should yield no paths")
+	}
+	if extractAbsPaths("PATH=/usr/bin:/bin") != nil {
+		t.Error("var assignments should yield no paths")
+	}
+}
+
+func TestParseKernelVersion(t *testing.T) {
+	maj, min, patch, ok := parseKernelVersion("5.16.10-generic")
+	if !ok || maj != 5 || min != 16 || patch != 10 {
+		t.Fatalf("got %d.%d.%d ok=%v", maj, min, patch, ok)
+	}
+	if _, _, _, ok := parseKernelVersion(""); ok {
+		t.Error("empty release should not parse")
+	}
+}
+
+func TestKernelVulnRange(t *testing.T) {
+	// DirtyPipe range is 5.8.0 .. 5.16.10 inclusive.
+	in := vkey(5, 16, 10)
+	var dirtyPipe kernelVuln
+	for _, v := range kernelVulns {
+		if v.cve == "CVE-2022-0847" {
+			dirtyPipe = v
+		}
+	}
+	if !(in >= dirtyPipe.minIncl && in <= dirtyPipe.maxIncl) {
+		t.Error("5.16.10 should be in DirtyPipe range")
+	}
+	if patched := vkey(5, 16, 11); patched <= dirtyPipe.maxIncl {
+		t.Error("5.16.11 should be out of DirtyPipe range")
+	}
+}
+
+func TestMemberGroups(t *testing.T) {
+	groupFile := "root:x:0:\ndocker:x:998:alice,bob\nshadow:x:42:\nadm:x:4:bob\n"
+	// alice is a named member of docker; bob is in gid 42 (shadow) via gids.
+	got := memberGroups(groupFile, map[int]bool{42: true}, "alice")
+	set := map[string]bool{}
+	for _, g := range got {
+		set[g] = true
+	}
+	if !set["docker"] {
+		t.Error("alice should be detected in docker (named member)")
+	}
+	if !set["shadow"] {
+		t.Error("should be detected in shadow (gid match)")
+	}
+	if set["adm"] {
+		t.Error("alice should not be in adm")
+	}
+}
+
 func TestRankingHighSafeFirst(t *testing.T) {
 	in := []Finding{
 		{Title: "low", Confidence: ConfLow, BlastRadius: BlastSafe},
